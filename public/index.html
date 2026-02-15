@@ -9,44 +9,44 @@
             margin: 0; overflow: hidden; touch-action: none;
             display: flex; flex-direction: column; align-items: center;
         }
-        #main-game { display: flex; flex-direction: column; align-items: center; }
-        canvas { border: 2px solid #fff; background: #000; max-width: 95vw; max-height: 70vh; }
-        #scoreboard { 
-            border: 2px solid #0f0; padding: 10px; background: #000;
-            width: 90vw; margin-top: 10px; font-size: 12px;
+        canvas { border: 2px solid #fff; background: #000; max-width: 95vw; max-height: 75vh; margin-top: 5px; }
+        #scoreboard { border: 2px solid #0f0; padding: 5px; width: 90vw; font-size: 14px; text-align: center; margin-top: 5px; }
+        
+        /* Joystick UI */
+        #joy-base {
+            position: absolute; bottom: 50px; left: 50px;
+            width: 100px; height: 100px; background: rgba(255,255,255,0.1);
+            border: 2px solid rgba(255,255,255,0.3); border-radius: 50%;
+            display: none; pointer-events: none;
         }
-        /* Mobile Controls */
-        #controls {
-            display: none; width: 100%; position: absolute; bottom: 20px;
-            justify-content: space-between; padding: 0 20px; box-sizing: border-box;
+        #joy-stick {
+            position: absolute; width: 40px; height: 40px;
+            background: rgba(0, 255, 0, 0.4); border-radius: 50%;
+            top: 30px; left: 30px;
         }
-        .btn {
-            width: 80px; height: 80px; background: rgba(255,255,255,0.2);
-            border: 2px solid #fff; border-radius: 50%; color: #fff;
+        #fireBtn {
+            position: absolute; bottom: 40px; right: 40px;
+            width: 100px; height: 100px; border: 4px solid #f00;
+            border-radius: 50%; color: #f00; font-weight: bold;
             display: flex; align-items: center; justify-content: center;
             user-select: none; -webkit-user-select: none;
+            background: rgba(255,0,0,0.1);
         }
-        @media (max-width: 800px) { #controls { display: flex; } #scoreboard { order: -1; } }
     </style>
 </head>
 <body>
-    <div id="ui-layer" style="margin-top: 50px;">
-        <h1>DOGFIGHT MOBILE</h1>
-        <input type="text" id="pName" placeholder="NAME" maxlength="8" style="padding:10px;">
-        <button onclick="initGame()" style="padding:10px; background:#0f0; color:#000;">START</button>
+    <div id="ui-layer" style="margin-top: 50px; text-align: center;">
+        <h1 style="color:white">DOGFIGHT ACE</h1>
+        <input type="text" id="pName" placeholder="PILOT NAME" maxlength="8" style="padding:10px; background:#000; color:#0f0; border:1px solid #0f0;">
+        <button onclick="initGame()" style="padding:15px 30px; background:#0f0; margin-top:20px;">TAKE OFF</button>
     </div>
 
     <div id="main-game" style="display:none;">
         <div id="scoreboard"><div id="aceList"></div></div>
         <canvas id="canvas" width="800" height="600"></canvas>
         
-        <div id="controls">
-            <div style="display:flex; gap:10px;">
-                <div class="btn" id="leftBtn">L</div>
-                <div class="btn" id="rightBtn">R</div>
-            </div>
-            <div class="btn" id="fireBtn" style="background: rgba(255,0,0,0.3);">FIRE</div>
-        </div>
+        <div id="joy-base"><div id="joy-stick"></div></div>
+        <div id="fireBtn">FIRE</div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
@@ -58,22 +58,62 @@
 
         let players = {}, bullets = [], explosions = [];
         let me = { x: 400, y: 300, angle: 0, speed: 3.5 };
+        let turnInput = 0; // -1 (Full Left) to 1 (Full Right)
         let keys = {};
 
-        // MOBILE TOUCH LOGIC
-        const bindBtn = (id, key) => {
-            const el = document.getElementById(id);
-            el.ontouchstart = (e) => { e.preventDefault(); keys[key] = true; if(key === ' ') shoot(); };
-            el.ontouchend = (e) => { e.preventDefault(); keys[key] = false; };
-        };
+        // --- JOYSTICK LOGIC ---
+        const joyBase = document.getElementById('joy-base');
+        const joyStick = document.getElementById('joy-stick');
+        let joyActive = false;
+        let joyStart = { x: 0, y: 0 };
+
+        document.addEventListener('touchstart', (e) => {
+            const touch = e.touches[0];
+            // If touching left half of screen, start joystick
+            if (touch.clientX < window.innerWidth / 2 && !joyActive) {
+                joyActive = true;
+                joyStart = { x: touch.clientX, y: touch.clientY };
+                joyBase.style.display = 'block';
+                joyBase.style.left = (joyStart.x - 50) + 'px';
+                joyBase.style.top = (joyStart.y - 50) + 'px';
+            }
+        }, {passive: false});
+
+        document.addEventListener('touchmove', (e) => {
+            if (!joyActive) return;
+            const touch = e.touches[0];
+            let dx = touch.clientX - joyStart.x;
+            
+            // Limit joystick movement
+            const dist = Math.min(Math.abs(dx), 50);
+            const dir = dx > 0 ? 1 : -1;
+            
+            // Visual Update
+            joyStick.style.left = (30 + (dir * dist * 0.6)) + 'px';
+            
+            // Granular turn value: -1 to 1
+            turnInput = (dx / 50);
+            if (turnInput > 1) turnInput = 1;
+            if (turnInput < -1) turnInput = -1;
+        }, {passive: false});
+
+        document.addEventListener('touchend', () => {
+            joyActive = false;
+            joyBase.style.display = 'none';
+            turnInput = 0;
+        });
+
+        // Fire Button
+        const fireBtn = document.getElementById('fireBtn');
+        fireBtn.addEventListener('touchstart', (e) => { e.preventDefault(); shoot(); });
 
         function shoot() {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
             bullets.push(createBullet());
             playSound('gun');
         }
 
         function playSound(type) {
-            if (audioCtx.state === 'suspended') audioCtx.resume();
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             osc.type = 'square';
@@ -91,17 +131,18 @@
         }
 
         function initGame() {
-            socket.emit('joinGame', document.getElementById('pName').value);
+            socket.emit('joinGame', document.getElementById('pName').value || "ACE");
             document.getElementById('ui-layer').style.display = 'none';
-            document.getElementById('main-game').style.display = 'flex';
-            bindBtn('leftBtn', 'ArrowLeft');
-            bindBtn('rightBtn', 'ArrowRight');
-            bindBtn('fireBtn', ' ');
+            document.getElementById('main-game').style.display = 'block';
             loop();
         }
 
-        window.onkeydown = (e) => { keys[e.key] = true; if(e.key === ' ') shoot(); };
-        window.onkeyup = (e) => keys[e.key] = false;
+        window.onkeydown = (e) => { 
+            if(e.key === 'ArrowLeft') turnInput = -1;
+            if(e.key === 'ArrowRight') turnInput = 1;
+            if(e.key === ' ') shoot(); 
+        };
+        window.onkeyup = (e) => { if(e.key.includes('Arrow')) turnInput = 0; };
 
         function createBullet() {
             return {
@@ -118,12 +159,13 @@
             ctx.moveTo(5, 0); ctx.lineTo(-8, 18); ctx.lineTo(-12, 18); ctx.lineTo(-2, 0);
             ctx.moveTo(-10, 0); ctx.lineTo(-18, -8); ctx.lineTo(-18, 8); ctx.closePath();
             ctx.stroke(); ctx.restore();
-            ctx.fillStyle = "#fff"; ctx.fillText(p.name, p.x - 20, p.y - 25);
+            ctx.fillStyle = "#fff"; ctx.fillText(p.name.toUpperCase(), p.x - 20, p.y - 25);
         }
 
         function loop() {
-            if (keys['ArrowLeft']) me.angle -= 0.08;
-            if (keys['ArrowRight']) me.angle += 0.08;
+            // Apply granular turn: 0.08 is the max turn speed
+            me.angle += (turnInput * 0.08);
+            
             me.x = (me.x + Math.cos(me.angle) * me.speed + 800) % 800;
             me.y = (me.y + Math.sin(me.angle) * me.speed + 600) % 600;
             socket.emit('move', me);
