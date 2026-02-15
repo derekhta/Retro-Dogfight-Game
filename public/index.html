@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Retro Dogfight Online</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <style>
+        body { 
+            background: #000; color: #0f0; font-family: 'Courier New', monospace; 
+            margin: 0; overflow: hidden; touch-action: none;
+            display: flex; flex-direction: column; align-items: center;
+        }
+        #main-game { display: flex; flex-direction: column; align-items: center; }
+        canvas { border: 2px solid #fff; background: #000; max-width: 95vw; max-height: 70vh; }
+        #scoreboard { 
+            border: 2px solid #0f0; padding: 10px; background: #000;
+            width: 90vw; margin-top: 10px; font-size: 12px;
+        }
+        /* Mobile Controls */
+        #controls {
+            display: none; width: 100%; position: absolute; bottom: 20px;
+            justify-content: space-between; padding: 0 20px; box-sizing: border-box;
+        }
+        .btn {
+            width: 80px; height: 80px; background: rgba(255,255,255,0.2);
+            border: 2px solid #fff; border-radius: 50%; color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            user-select: none; -webkit-user-select: none;
+        }
+        @media (max-width: 800px) { #controls { display: flex; } #scoreboard { order: -1; } }
+    </style>
+</head>
+<body>
+    <div id="ui-layer" style="margin-top: 50px;">
+        <h1>DOGFIGHT MOBILE</h1>
+        <input type="text" id="pName" placeholder="NAME" maxlength="8" style="padding:10px;">
+        <button onclick="initGame()" style="padding:10px; background:#0f0; color:#000;">START</button>
+    </div>
+
+    <div id="main-game" style="display:none;">
+        <div id="scoreboard"><div id="aceList"></div></div>
+        <canvas id="canvas" width="800" height="600"></canvas>
+        
+        <div id="controls">
+            <div style="display:flex; gap:10px;">
+                <div class="btn" id="leftBtn">L</div>
+                <div class="btn" id="rightBtn">R</div>
+            </div>
+            <div class="btn" id="fireBtn" style="background: rgba(255,0,0,0.3);">FIRE</div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        let players = {}, bullets = [], explosions = [];
+        let me = { x: 400, y: 300, angle: 0, speed: 3.5 };
+        let keys = {};
+
+        // MOBILE TOUCH LOGIC
+        const bindBtn = (id, key) => {
+            const el = document.getElementById(id);
+            el.ontouchstart = (e) => { e.preventDefault(); keys[key] = true; if(key === ' ') shoot(); };
+            el.ontouchend = (e) => { e.preventDefault(); keys[key] = false; };
+        };
+
+        function shoot() {
+            bullets.push(createBullet());
+            playSound('gun');
+        }
+
+        function playSound(type) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'square';
+            if (type === 'gun') {
+                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+            } else {
+                osc.frequency.setValueAtTime(80, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(20, audioCtx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+            }
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.2);
+        }
+
+        function initGame() {
+            socket.emit('joinGame', document.getElementById('pName').value);
+            document.getElementById('ui-layer').style.display = 'none';
+            document.getElementById('main-game').style.display = 'flex';
+            bindBtn('leftBtn', 'ArrowLeft');
+            bindBtn('rightBtn', 'ArrowRight');
+            bindBtn('fireBtn', ' ');
+            loop();
+        }
+
+        window.onkeydown = (e) => { keys[e.key] = true; if(e.key === ' ') shoot(); };
+        window.onkeyup = (e) => keys[e.key] = false;
+
+        function createBullet() {
+            return {
+                x: me.x + Math.cos(me.angle) * 25, y: me.y + Math.sin(me.angle) * 25,
+                vx: Math.cos(me.angle) * 10, vy: Math.sin(me.angle) * 10, life: 60
+            };
+        }
+
+        function drawJet(p, color) {
+            ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.angle);
+            ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
+            ctx.moveTo(20, 0); ctx.lineTo(-15, 0); 
+            ctx.moveTo(5, 0); ctx.lineTo(-8, -18); ctx.lineTo(-12, -18); ctx.lineTo(-2, 0);
+            ctx.moveTo(5, 0); ctx.lineTo(-8, 18); ctx.lineTo(-12, 18); ctx.lineTo(-2, 0);
+            ctx.moveTo(-10, 0); ctx.lineTo(-18, -8); ctx.lineTo(-18, 8); ctx.closePath();
+            ctx.stroke(); ctx.restore();
+            ctx.fillStyle = "#fff"; ctx.fillText(p.name, p.x - 20, p.y - 25);
+        }
+
+        function loop() {
+            if (keys['ArrowLeft']) me.angle -= 0.08;
+            if (keys['ArrowRight']) me.angle += 0.08;
+            me.x = (me.x + Math.cos(me.angle) * me.speed + 800) % 800;
+            me.y = (me.y + Math.sin(me.angle) * me.speed + 600) % 600;
+            socket.emit('move', me);
+
+            ctx.fillStyle = "black"; ctx.fillRect(0, 0, 800, 600);
+            let scoreHTML = "ACES: ";
+            for (let id in players) {
+                let p = players[id];
+                drawJet(p, id === socket.id ? "#fff" : "#0f0");
+                scoreHTML += `${p.name}:${p.score} | `;
+            }
+            document.getElementById('aceList').innerHTML = scoreHTML;
+
+            bullets.forEach((b, i) => {
+                b.x += b.vx; b.y += b.vy; b.life--;
+                if (b.life <= 0) bullets.splice(i, 1);
+                ctx.fillStyle = "yellow"; ctx.fillRect(b.x, b.y, 4, 4);
+                for (let id in players) {
+                    if (id !== socket.id && Math.hypot(b.x - players[id].x, b.y - players[id].y) < 20) {
+                        explosions.push({x: players[id].x, y: players[id].y, size: 5, life: 10});
+                        playSound('boom'); socket.emit('bulletHit', id); bullets.splice(i, 1);
+                    }
+                }
+            });
+
+            explosions.forEach((e, i) => {
+                ctx.strokeStyle = "white"; ctx.beginPath();
+                for(let j=0; j<8; j++) {
+                    let a = j * Math.PI/4;
+                    ctx.moveTo(e.x, e.y); ctx.lineTo(e.x + Math.cos(a)*e.size, e.y + Math.sin(a)*e.size);
+                }
+                ctx.stroke(); e.size += 2; e.life--;
+                if(e.life <= 0) explosions.splice(i, 1);
+            });
+            requestAnimationFrame(loop);
+        }
+        socket.on('updateState', (data) => players = data);
+    </script>
+</body>
+</html>
